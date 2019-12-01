@@ -1,0 +1,637 @@
+---
+title: "How too-hot water tanks affect fishes growth"
+author: "FERRI EGON 1700962"
+output:
+  html_document:
+    df_print: kable
+    fig_height: 6.5
+    fig_width: 10
+    highlight: pygments
+    theme: yeti
+    toc: yes
+    toc_float: yes
+---
+<style>
+a:link {
+    color: ligthblue;
+}
+a:visited{
+    color: ligthblue;
+}
+a:hover {
+    color: aquamarine;
+}
+
+
+</style>
+
+\usepackage{asmath}
+
+```{r include=FALSE}
+require('MCMCglmm')
+require('invgamma')
+require('vapoRwave')
+require(ggplot2)
+require(viridis)
+require(tidyverse)
+require(R2jags)
+require(plot3D)
+require(coda)
+require(jagsplot)
+require(lattice)
+require(ggmcmc)
+require(plotly)
+require(xtable)
+colorizer=vapoRwave::floralShoppe_pal()
+cols=colorizer(n=8)
+niter=500000
+```
+
+
+------------------------
+
+<center> ![](nemo-shrink.jpg) </center>
+
+------------------------
+# Data presentation and exploration
+
+## Source and goal of the analyisis
+
+The data of this analysis can be found [here](http://people.sc.fsu.edu/~jburkardt/datasets/regression/x06.txt).
+
+The goal of the analysis is to represent the growth of the fishes as a function of the age and water temperature.
+
+## Data collection
+
+The fish are kept in tanks at 25, 27, 29 and 31 degrees Celsius.
+
+After birth, a test specimen is chosen at random every 14 days and its length measured.
+There are 44 rows of data.  
+
+The data include:
+
+* the age of the fish in days;
+* the water temperature in Celsius degrees ;
+* the length of the fish in decimillimeter.
+
+
+```{r echo=FALSE}
+df=read.table("C:/Users/Egon/Desktop/Universita/SecondoSemestre/SDS/progetto/pesci.txt", quote="\"", comment.char="")
+df=df[2:4]
+names(df) <- c('age', 'temperature', 'length')
+df_clean=df
+head(df)
+```
+
+## Basic graphical analyisis
+
+
+```{r echo=FALSE, warning=FALSE}
+X=df$age
+Y=df$length
+ggplot(df, aes(X, Y))+
+  geom_point(aes(color=temperature)) +
+  scale_color_gradient(low = cols[2], high=cols[5])+
+  theme(
+    legend.position = "top",
+    legend.key = element_rect(fill = "#2D2D2D")
+    )+
+  labs(title='FISH LENGTH, AGE, TANK TEMPERATURE')+xlab('Age (days)')+ylab('Length (decimillimeter)')
+```
+
+
+```{r echo=FALSE}
+plot <- plot_ly(df, x = ~age, y = ~temperature, z = ~length,
+        marker = list(color = ~length, showscale = FALSE, colorscale='YlOrRd', reversescale=T)) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Age (days)'),
+                     yaxis = list(title = 'Temperature (celsius)'),
+                     zaxis = list(title = 'Length (decimillimeters)')))
+plot
+```
+
+
+From the graphs we can already see something interesting. 
+
+The growing function of the fishes seems to behave well, so hopefully we can estimate it properly.
+
+The temperature seems to have a clear effect on our fishes: it does nothing until a critical value, but when it reaches 31 Celsius degree has an evident impact, reducing the length of the fishes.
+
+# Are we frequentist?...
+
+## Linear regression above all the features
+
+In a frequentist framework, the dubmest thing that we can do is to throw a linear regressor on everything and see what happens.
+
+From now on we will refer as:
+
+* length with $z$
+* age with $x$
+* temperature with $y$
+
+This model is given by:
+
+
+$$z= ax + by +c$$
+
+
+```{r}
+z=df$length
+x=df$age
+y=df$temperature
+
+
+# Compute the linear regression (z = ax + by + d)
+fit <- lm(z ~ x + y)
+
+summary(fit)
+
+
+```
+
+This model gives us a multiple R-squared of $80$%, not bad, but we can surely do better.
+
+Let's take a look at the fitted plane:
+
+```{r echo=FALSE, warning=TRUE}
+# predict values on regular xy grid
+grid.lines = 26
+x.pred <- seq(min(x), max(x), length.out = grid.lines)
+y.pred <- seq(min(y), max(y), length.out = grid.lines)
+xy <- expand.grid( x = x.pred, y = y.pred)
+z.pred <- matrix(predict(fit, newdata = xy), 
+                 nrow = grid.lines, ncol = grid.lines)
+# fitted points for droplines to surface
+fitpoints <- predict(fit)
+# scatter plot with regression plane
+scatter3D(x, y, z, pch = 18, cex = 2, phi=0,
+    xlab='age', ylab='temperature', zlab='length', 
+    surf = list(x = x.pred, y = y.pred, z = z.pred,  
+    facets = NA, fit = fitpoints), main = "fish", col = gg.col(100))
+```
+
+
+As we could expect, the simple flat plane is not capable of recovering the curvature of the function, moreover, this model is not able to get the influence of the temperature.
+
+## Polynomial regression: no temperature into account
+
+
+As we can read in [this study](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3912445/) by Johannes Hamre Espen Johnsen and Kristin Hamre, a lot of fishes growth function can be estimated with a second order polynomial fit. So let's try to fit it (for a moment we leave out the temperature factor).
+
+$$z = a + bx +cx^2$$
+
+
+
+```{r}
+df=df[order(df$age),]
+model <- lm(df$length ~ poly(df$age,2, raw = T), data=df)
+summary(model)
+```
+
+We reach an r squared of $90$%, so the second grade polynomial is a good way to estimate our function.
+
+```{r}
+predicted.intervals <- predict(model,data.frame(x=df$age),interval='confidence',
+                               level=0.99)
+
+```
+
+
+
+```{r echo=FALSE}
+
+X=df$age
+Y=df$length
+ggplot(df, aes(X, Y))+
+  geom_point(aes(color=temperature)) +
+  scale_color_gradient(low = cols[2], high=cols[5])+
+  theme(
+    legend.position = "top",
+    legend.key = element_rect(fill = "#2D2D2D")
+    )+
+  labs(title='POLYNOMIAL REGRESSION (NO TEMPERATURE INTO ACCOUNT)')+xlab('Age (days)')+ylab('Length (decimillimeter)')+
+  geom_line( aes(df$age,predicted.intervals[,1]),col=cols[1],lwd=1.2)+
+  geom_line( aes(df$age,predicted.intervals[,2]),col=cols[2],lwd=1.2)+
+  geom_line( aes(df$age,predicted.intervals[,3]),col=cols[2],lwd=1.2)
+```
+
+Obviously our model is biased through the non-hot function, since we have three registrations vs one.
+
+## Polynomial regression: Temperature models
+
+To bring in temperature in our model, we can start by trying to fit this polynomial regression by taking the two groups, and analyze the result.
+
+
+```{r}
+df=df_clean
+df=df[1:33,]
+df=df[order(df$age),]
+cold_model <- lm(df$length ~ poly(df$age,2, raw = T), data=df)
+predicted.intervals <- predict(cold_model,data.frame(x=df$age),interval='confidence',
+                               level=0.99)
+cold_predict<- function(x) coef(cold_model)[1] + coef(cold_model)[2] * x + coef(cold_model)[3] * x^2
+```
+
+```{r echo=FALSE}
+
+X=df$age
+Y=df$length
+ggplot(df, aes(X, Y))+
+  geom_point(aes(color=temperature)) +
+  scale_color_gradient(low = cols[2], high=cols[5])+
+  theme(
+    legend.position = "top",
+    legend.key = element_rect(fill = "#2D2D2D")
+    )+
+  labs(title='POLYNOMIAL REGRESSION (COLD MODEL)')+xlab('Age (days)')+ylab('Length (decimillimeter)')+
+  geom_line( aes(df$age,predicted.intervals[,1]),col=cols[1],lwd=1.2)+
+  geom_line( aes(df$age,predicted.intervals[,2]),col=cols[2],lwd=1.2)+
+  geom_line( aes(df$age,predicted.intervals[,3]),col=cols[2],lwd=1.2)
+
+```
+
+
+
+```{r}
+df=df_clean
+df=df[34:44,]
+df=df[order(df$age),]
+hot_model <- lm(df$length ~ poly(df$age,2, raw = T), data=df)
+predicted.intervals <- predict(hot_model,data.frame(x=df$age),interval='confidence',
+                               level=0.99)
+hot_predict<- function(x) coef(hot_model)[1] + coef(hot_model)[2] * x + coef(hot_model)[3] * x^2
+```
+
+
+```{r echo=FALSE}
+
+X=df$age
+Y=df$length
+ggplot(df, aes(X, Y))+
+  geom_point(aes(color=temperature)) +
+  scale_color_gradient(low = cols[2], high=cols[5])+
+  theme(
+    legend.position = "top",
+    legend.key = element_rect(fill = "#2D2D2D")
+    )+
+  labs(title='POLYNOMIAL REGRESSION (HOT MODEL)')+xlab('Age (days)')+ylab('Length (decimillimeter)')+
+  geom_line( aes(df$age,predicted.intervals[,1]),col=cols[1],lwd=1.2)+
+  geom_line( aes(df$age,predicted.intervals[,2]),col=cols[2],lwd=1.2)+
+  geom_line( aes(df$age,predicted.intervals[,3]),col=cols[2],lwd=1.2)
+
+```
+
+
+```{r echo=FALSE}
+df=df_clean
+X=df$age
+Y=df$length
+ggplot(df, aes(X, Y))+
+  geom_point(aes(color=temperature)) +
+  scale_color_gradient(low = cols[2], high=cols[5])+
+  theme(
+    legend.position = "top",
+    legend.key = element_rect(fill = "#2D2D2D"))+
+  labs(title='POLYNOMIAL REGRESSION (BOTH)')+xlab('Age (days)')+ylab('Length (decimillimeter)')+
+  stat_function(fun=cold_predict, col=cols[3], lwd=1.2)+
+  stat_function(fun=hot_predict, col=cols[5], lwd=1.2)
+
+
+```
+
+#### Summaries {.tabset}
+
+
+##### General
+
+
+```{r}
+summary(model)
+```
+
+
+
+##### Hot
+
+
+```{r}
+summary(hot_model)
+```
+
+##### Cold
+
+
+```{r}
+summary(cold_model)
+```
+
+####
+
+Fixing the temperature (or better; stating that the temperature is under or over the critical level) our r-squared bumps out to $99$%, the function becomes really stable. 
+
+#### Parameters estimate 
+
+
+```{r}
+data.frame(model$coefficients, hot_model$coefficients, cold_model$coefficients)
+```
+
+
+
+#### Confidence intervals {.tabset}
+
+
+##### General
+
+
+```{r}
+xtable(confint(model, level=0.95))
+```
+
+
+
+##### Hot
+
+
+```{r}
+xtable(confint(hot_model, level=0.95))
+```
+
+##### Cold
+
+
+```{r}
+xtable(confint(cold_model, level=0.95))
+```
+
+
+####
+Looking at the parameter estimates and at confidence intervals, we gain another proof that the two models are indeed different. 
+
+To build a model that incorporates in a unique function the temperatures, let's be Bayesian:
+
+# ...Or ar we bayesian?
+
+## Simple model (no temperature)
+
+```{r echo=FALSE}
+df=df_clean
+```
+
+Let's at first construct the same simple model as before; a simple polynomial regression, and try to recover the parameters.
+
+
+<center> ![](simple_model_pic.jpg) </center>
+
+
+```{r}
+cat("model{
+  for(i in 1:n){
+    length[i]~dnorm(mi[i],tau)
+    mi[i]<-  a + b*x[i] +c *pow(x[i],2)
+  }
+  #Priors (non-informative)
+
+  a ~ dunif(-1000, 1000)
+	b ~ dunif(-1000, 1000)
+	c ~ dunif(-1000, -0.001)
+  tau ~ dgamma(0.01, 0.01)
+	sigma <- 1 / sqrt(tau)
+}", file='fish_model_simple.txt')
+
+
+dats =list(length= df$length, x=df$age,n=nrow(df))
+
+inits =list(list( a = 300, b = 200, c=-1, tau=1),
+            list(a = -300, b = -200, c=-0.1, tau=0.1))
+
+params= c( 'a', 'b', 'c', 'sigma')
+
+
+
+simple_model =jags(model.file = 'fish_model_simple.txt',data = dats,inits = inits,n.chains = 2,
+                   parameters.to.save = params,n.iter = niter,n.burnin = niter/50)
+```
+
+
+
+
+
+
+```{r}
+simple_model$BUGSoutput
+bayes.mod.fit.mcmc <- as.mcmc(simple_model)
+```
+
+To evaluate the goodness of the model we can use the [DIC](https://www.mrc-bsu.cam.ac.uk/software/bugs/the-bugs-project-dic/).
+
+The _deviance information criterion_ is a hierarchical modeling generalization of the Akaike information criterion. It is particularly useful in Bayesian model selection problems where the posterior distributions of the models have been obtained by Markov chain Monte Carlo (MCMC) simulation. DIC is an asymptotic approximation as the sample size becomes large, like AIC. It is only valid when the posterior distribution is approximately multivariate normal.
+
+How to calculate it?
+
+Define the deviance as ${\displaystyle D(\theta )=-2\log(p(y|\theta ))+C\,}$, where  $y$ are the data, $\theta$  are the unknown parameters of the model and $p(y|\theta )$ is the likelihood function. $C$ is a constant that cancels out in all calculations that compare different models, and which therefore does not need to be known.
+
+To calculate the effective number of parameters of the model, as described in [Gelman(2004, p. 182)](https://books.google.it/books/about/Bayesian_Data_Analysis_Second_Edition.html?id=TNYhnkXQSjAC&redir_esc=y) we use $p_{D}=p_{V}=\frac{1}{2} \hat{var}(D(\theta))$. The larger the effective number of parameters is, the easier it is for the model to fit the data, and so the deviance needs to be penalized.
+
+The deviance information criterion is calculated as
+
+${\mathit  {DIC}}=p_{D}+{\bar  {D}}$,
+or equivalently as
+
+${\mathit {DIC}}=D({\bar  {\theta }})+2p_{D}$.
+
+We get a DIC of 670. Now it's only a row number, but it will be useful to compare this model with the next model, where we introduce the temperature.
+
+Let's take a look to the common diagnostic of our MCMC to asses the performance.
+
+#### Bugs output {.tabset}
+
+
+##### Density
+
+```{r}
+densityplot(bayes.mod.fit.mcmc,  layout=c(5,1), aspect="fill",col=c(cols[2], cols[5]))
+```
+
+density plots are approximately normal shaped(as we like them to be), and are very similar between the two chains.
+
+##### Trace
+
+
+```{r}
+xyplot(bayes.mod.fit.mcmc, layout=c(1,5), aspect="fill",col=c(cols[2], cols[5]))
+```
+
+##### Autocorrelation
+
+
+```{r}
+ggs_autocorrelation(ggs(bayes.mod.fit.mcmc))
+
+```
+
+
+
+Pretty good: with this big sample (quite big indeed), we have almost uncorrelated chains. 
+
+
+##### Running mean
+
+
+```{r}
+ggs_running(ggs(bayes.mod.fit.mcmc))
+```
+
+
+
+##### Fit
+
+```{r echo=FALSE, warning=FALSE}
+my_coeff=simple_model$BUGSoutput$mean
+simple_function<- function(x) as.numeric(my_coeff$a) + as.numeric(my_coeff$b)*x+as.numeric(my_coeff$c) *x^2
+
+X=df$age
+Y=df$length
+ggplot(df, aes(X, Y))+
+  geom_point(aes(color=df$temperature)) +
+  scale_color_viridis_c()+
+  scale_fill_viridis_c()+
+  theme(
+    legend.position = "top",
+    legend.key = element_rect(fill = "#2D2D2D")
+    )+
+  labs(title='fish length as a function of age (in days) and tank temperature')+xlab('day')+ylab('length')+
+  stat_function(fun=simple_function, col=cols[3], lwd=1.2)
+
+```
+
+The model seems capable to recover realistic parameters, however we still keep the problems of the frequentist analysis; we want to encode the temperature in one only model; let's try to do it.
+
+## Complex model (with temperature)
+
+
+To introduce the temperature the proposal is to insert to parameters that modify the coefficients of the polynomial when the temperature is too hot(using a transformation of the temperature feature into a binary):
+
+$$z =  a + (b-\beta*h)*x +(c-\gamma*h) *x^2$$
+<center> ![](complex_model_pic.jpg) </center>
+
+
+```{r}
+df=df_clean
+df['hot']=as.integer((df['temperature']>30)*1)
+df <- select(df, -'temperature')
+```
+
+
+```{r}
+cat("model{
+#Likelihood
+  for(i in 1:n){
+    length[i]~dnorm(mi[i],tau)
+    mi[i]<-  a + (b-beta*h[i])*x[i] +(c-gamma*h[i]) *pow(x[i],2)
+  }
+  #Priors (non-informative)
+
+  a ~ dunif(-1000, 1000)
+	b ~ dunif(-1000, 1000)
+	c ~ dunif(-1000, -0.001)
+	beta ~ dunif(-100, 100)
+	gamma ~  dunif(-100, 100)
+  tau ~ dgamma(0.001, 0.001)
+	sigma <- 1 / sqrt(tau)
+}", file='fish_model_complex.txt')
+
+
+data =list(length= df$length, x=df$age,h=df$hot,n=nrow(df))
+
+
+init =list(list(beta = 0.1, gamma = 0.1, a = -300, b = -200, c=-1, tau=1),
+           list(beta = 1, gamma = 1, a = 300, b = 200, c=-0.1, tau=0.1))
+
+params= c("beta", 'gamma', 'a', 'b', 'c', 'sigma')
+
+
+complex_model =jags(model.file = 'fish_model_complex.txt',data = data,n.chains = 2,
+               parameters.to.save = params ,n.iter = niter,n.burnin = niter/50,inits = init)
+```
+
+
+```{r}
+complex_model$BUGSoutput
+bayes.mod.fit.mcmc <- as.mcmc(complex_model)
+```
+
+We get a lower DIC, so our model it's better.
+
+
+#### Bugs output {.tabset}
+
+
+##### Density
+
+```{r}
+densityplot(bayes.mod.fit.mcmc,  layout=c(4,2), aspect="fill",col=c(cols[2], cols[5]))
+```
+
+density plots are approximately normal shaped(as we like them to be), and are very similar between the two chains.
+
+##### Trace
+
+
+```{r}
+xyplot(bayes.mod.fit.mcmc, layout=c(1,7), aspect="fill",col=c(cols[2], cols[5]))
+```
+
+##### Autocorrelation
+
+
+```{r}
+ggs_autocorrelation(ggs(bayes.mod.fit.mcmc))
+
+```
+
+
+
+Pretty good: with this big sample (quite big indeed), we have almost uncorrelated chains. 
+
+
+##### Running mean
+
+
+```{r}
+ggs_running(ggs(bayes.mod.fit.mcmc))
+```
+
+
+
+##### Fit
+
+```{r echo=FALSE, warning=FALSE}
+my_coeff=complex_model$BUGSoutput$mean
+
+
+y=c(0,1)
+x=(1:160)
+zfun <- function(x,y) {my_coeff$a + (my_coeff$b-my_coeff$beta*y)*x +(my_coeff$c-my_coeff$gamma*y) *x^2}
+z    <- outer(x, y, FUN="zfun")
+
+
+p=plot_ly(z=z, type="surface", colorscale='YlOrRd', reversescale=T) %>%
+    layout(
+    showlegend=FALSE,
+    title = "Final model to predict the lengt of a fish",
+    scene = list(
+      xaxis = list(title = "Too hot tank"),
+      yaxis = list(title = "Age"),
+      zaxis = list(title = "Length")
+    ))
+colorbar(p, x=0)
+```
+
+# Conclusions
+
+After our analysis, we can state that, according to our data, the temperature is a relevant factor in the growth of fishes, and going further with this study could be helpful to have an idea of how global warming could affect the life of the marine animal population.
+
+How ever, the sample of this work was not-so-big to draw strong conclusion, for example the fact that we have only one heavy-warmed tank could be a factor of bias.
+
+To get more consistent results we should use larger samples.
