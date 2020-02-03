@@ -11,5 +11,5 @@ The goal of the analysis is to represent the growth of the fishes as a function 
 
 
 <p align="center">
-<img src="https://ibb.co/FzSLjxc">
+<img src="https://i.ibb.co/bXSM8WY/newplot.png">
 </p>
